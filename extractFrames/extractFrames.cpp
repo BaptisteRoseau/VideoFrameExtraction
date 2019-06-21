@@ -18,7 +18,7 @@ using namespace cv;
 #define SKIP_FRAMES 10
 #define SKIP_SECONDS 1.2
 #define PRINT_INTERVAL 100  // No print: 0
-#define MAX_FRAME_IDX 0     // No limit: 0
+#define MAX_FRAME_IDX 20     // No limit: 0
 #define DFLT_MEAN_COUNTED 20
 #define THRESHOLD_COEF 2
 #define WRITE true
@@ -28,11 +28,13 @@ using namespace cv;
 //TODO: Essayer de boucher les fuites mémoires dûes à OpenCV
 //TODO: Equivalent de matplotlib pour C++
 //TODO: Ajouter une condition "Si un personnage est sur les 2 frames"
+//TODO: BOUCHER LES FUITES MEMOIRES !!!!!!
+//TODO: Renommer de façon plus explicite
 
 /*======== SUBFUNCTIONS DECLARATION ==========*/
 
 void skip_frames(VideoCapture &video, const unsigned int nb_frames, unsigned int &frames_index);
-double difference(Mat &prev, const Mat &next, Mat *buffer, const unsigned int area_side);
+double difference(const Mat &prev, const Mat &next, Mat *buffer, const unsigned int area_side);
 void write_frames(const Mat &prev, const Mat &next, string prefix, unsigned int index);
 void check_directory(const char *path);
 
@@ -97,6 +99,7 @@ int main(int argc, char** argv)
 	double diff, diff_coef, mean = 0; // The mean of all computed differences
 	unsigned int mean_counter = 0;    // Counter on how many means were calculated
 	unsigned int max_frame_idx = MAX_FRAME_IDX == 0 ? nb_frames + 1 : MAX_FRAME_IDX;
+	cout << max_frame_idx << endl;
 
 	// Main Loop
 	while(curr_frame_idx < max_frame_idx && !curr_frame.empty()){ // While frames remain
@@ -111,6 +114,7 @@ int main(int argc, char** argv)
 
 		// Computing difference between frames
 		diff = difference(prev_frame, curr_frame, diff_frame, 5); // Returns the difference matrix and the value
+		cout << "Difference: " << diff << endl;
 
 		// Ajusting mean
 		if (mean_counter == 0){ mean = mean + diff; mean_counter++;}
@@ -190,19 +194,24 @@ class Operator{ // An operator used by Mat::forEach()
 		const Mat *prev;
 		const Mat *next;
 		int halfside;
+		unsigned int diff_len;
 		double *diff; // Buffer for difference calculus
 
 	public:
-		Operator(const Mat *prev, const Mat *next, const unsigned int side, double *diff_buffer){
+		Operator(const Mat *prev, const Mat *next, const unsigned int side){
 			assert(prev->dims == next->dims && prev->size() == next->size() && prev->channels() == next->channels());
-			assert(diff_buffer != NULL);
-			this->diff = diff_buffer;
-			this->prev = prev;
-			this->next = next;
+			this->prev     = prev;
+			this->next     = next;
 			this->halfside = (int) side/2;
+			this->diff_len = next->rows*next->cols;
+			this->diff     = new double[this->diff_len]; // One case for each computed pixel to prevent parallel issue
 		}
 
-		// Local difference operation
+		~Operator(){
+			delete[] this->diff;
+		}
+
+		// Local difference operation (called for each pixel)
 		void operator()(Pixel &pixel, const int * pos) const{
 			// Submatrix extraction around current pixel (O(1))
 			Range r_x = Range(max(pos[0]-halfside, 0), min(pos[0]+halfside+1, this->prev->rows));
@@ -214,22 +223,29 @@ class Operator{ // An operator used by Mat::forEach()
 			Scalar sum_diff = sum(sub_next) - sum(sub_prev); // Difference on each channel
 			this->diff[pos[0]*prev->cols + pos[1]] = sum(sum_diff)[0] / (sub_prev.rows * sub_prev.cols); // Total difference
 
-			//IDEA: Apply a log function to reduce the probability of having a 'nan'
-			//TODO: Find a "fast" log approximation
+			//TODO: Set the pixel value according to the diff (care about double -> uchar)
+
+			//TODO: Apply a log function to reduce the probability of having a 'nan'
+			//TODO: Find a "fast" log approximation in c++
+		}
+
+		// Retrieve difference value
+		// /!\ Call this after the forEach function, not before !!
+		double getDiff(){
+			double ret = 0;
+			for (unsigned int i = 0; i < this->diff_len; i++){
+				cout << i << " " << this->diff[i] << endl;
+				ret += this->diff[i]; //Segfault here
+			}
+			cout << ret << endl;
+			return ret;
 		}
 };
 
-double difference(Mat &prev, const Mat &next, Mat *buffer, const unsigned int area_side = 5){
+double difference(const Mat &prev, const Mat &next, Mat *buffer, const unsigned int area_side = 5){
 	//Note: Buffer are used because of the "const" qualifier of Operator::operator() requiered by Mat::forEach
-	unsigned int buff_dim = next.rows*next.cols;
-	double *diff_buffer = new double[buff_dim]; // One case for each computed pixel to prevent parallel issue
-	Operator op = Operator(&prev, &next, area_side, diff_buffer);
+	Operator op = Operator(&prev, &next, area_side);
 	buffer->forEach<Pixel>(op);
-	double ret = 0;
-	for (unsigned int i = 0; i < buff_dim; i++){
-		ret += diff_buffer[i];
-	}
-	delete[] diff_buffer;
-	cout << "Difference: " << ret << endl;
+	double ret = 0;//op.getDiff();
 	return ret;
 }
