@@ -1,4 +1,5 @@
 #include <opencv2/opencv.hpp>
+#include <opencv2/core/mat.hpp>
 #include <opencv2/videoio/legacy/constants_c.h>
 
 #include <sys/types.h>
@@ -14,11 +15,11 @@ using namespace std;
 using namespace cv;
 
 
-#define SKIP_FRAMES 1
+#define SKIP_FRAMES 10
 #define SKIP_SECONDS 1.2
-#define PRINT_INTERVAL 5  // No print: 0
-#define MAX_FRAME_IDX 15
-#define DFLT_MEAN_COUNTED 10
+#define PRINT_INTERVAL 100  // No print: 0
+#define MAX_FRAME_IDX 0     // No limit: 0
+#define DFLT_MEAN_COUNTED 20
 #define THRESHOLD_COEF 2
 #define WRITE true
 
@@ -31,7 +32,7 @@ using namespace cv;
 /*======== SUBFUNCTIONS DECLARATION ==========*/
 
 void skip_frames(VideoCapture &video, const unsigned int nb_frames, unsigned int &frames_index);
-double difference(const Mat &prev, const Mat &next, Mat *buffer, const unsigned int area_side);
+double difference(Mat &prev, const Mat &next, Mat *buffer, const unsigned int area_side);
 void write_frames(const Mat &prev, const Mat &next, string prefix, unsigned int index);
 void check_directory(const char *path);
 
@@ -44,16 +45,17 @@ void usage(char* name){
 #define PARAM 2
 int main(int argc, char** argv)
 {
-	// Marco verification
+	// Macro verification
 	//assert(SKIP_FRAMES == 0 || SKIP_SECONDS == 0);
 	assert(SKIP_FRAMES >= 0 && SKIP_SECONDS >= 0);
 	assert(PRINT_INTERVAL >= 0);
-	assert(MAX_FRAME_IDX > 0);
+	assert(MAX_FRAME_IDX >= 0);
 	assert(DFLT_MEAN_COUNTED > 0);
 	assert(THRESHOLD_COEF > 0);
 	//assert(typeof(WRITE) == bool);
 
-	if (argc != PARAM+1){ // Print usage if not enough parameters
+ 	// Print usage if not enough parameters
+	if (argc != PARAM+1){
 		usage(argv[0]);
 		return -1;
 	}
@@ -69,12 +71,12 @@ int main(int argc, char** argv)
 	check_directory(argv[2]);
 
 	// Building prefix for images writing
-	char *file = argv[1];
-	string dir  = argv[2];
-	char *lastdot = strrchr(file, '.');
-    if (lastdot != NULL) {*lastdot = '\0';} //Removing extension (ex: .mp4)
+	char *file      = argv[1];
+	string dir      = argv[2];
+	char *lastdot   = strrchr(file, '.');
+    if (lastdot     != NULL) {*lastdot = '\0';} //Removing extension (ex: .mp4)
 	char *lastslash = strrchr(file, '/');
-	if (lastslash != NULL) {file = lastslash;} //Removing previous path (ex: ../)
+	if (lastslash   != NULL) {file = lastslash;} //Removing previous path (ex: ../)
 	string output_prefix = dir+"/"+file+"_frame_";
 
 	// Video settings
@@ -90,12 +92,14 @@ int main(int argc, char** argv)
 	video >> prev_frame; // Getting first frame
 	video >> curr_frame; // Getting second frame
 	Mat *diff_frame = new Mat(prev_frame.size(), prev_frame.type()); // Buffer for 
+
 	unsigned int curr_frame_idx = 1;
 	double diff, diff_coef, mean = 0; // The mean of all computed differences
-	unsigned int mean_counter = 0; // Counter on how many means were calculated
+	unsigned int mean_counter = 0;    // Counter on how many means were calculated
+	unsigned int max_frame_idx = MAX_FRAME_IDX == 0 ? nb_frames + 1 : MAX_FRAME_IDX;
 
 	// Main Loop
-	while(curr_frame_idx < MAX_FRAME_IDX && !curr_frame.empty()){ // While frames remain
+	while(curr_frame_idx < max_frame_idx && !curr_frame.empty()){ // While frames remain
 		skip_frames(video, SKIP_FRAMES, curr_frame_idx);
 
 		// Displaying script advancement
@@ -108,7 +112,7 @@ int main(int argc, char** argv)
 		// Computing difference between frames
 		diff = difference(prev_frame, curr_frame, diff_frame, 5); // Returns the difference matrix and the value
 
-		// Ajusting mean and writing pictures into the directory
+		// Ajusting mean
 		if (mean_counter == 0){ mean = mean + diff; mean_counter++;}
 		else {mean += (diff - mean)/mean_counter; mean_counter++;}
 
@@ -123,7 +127,7 @@ int main(int argc, char** argv)
 			write_frames(prev_frame, curr_frame, output_prefix, curr_frame_idx);
 		}
 
-		// Saving previous frame
+		// Saving frame for next step
 		prev_frame.release();
 		prev_frame = curr_frame;
 	}
@@ -131,14 +135,14 @@ int main(int argc, char** argv)
 	// Cleaning memory
   	video.release();
 	delete diff_frame;
-	
-	
-  	// Closes all the frames
+
 	cout << "Exited successfully." << endl;
     return 0;
 }
 
+
 /*======== SUBFUNCTIONS IMPLEMENTATION ==========*/
+
 
 void write_frames(const Mat &prev, const Mat &next, string prefix, unsigned int index){
 	if (imwrite(prefix+to_string(index-1)+".jpg", prev)
@@ -175,8 +179,57 @@ void skip_frames(VideoCapture &video, const unsigned int nb_frames, unsigned int
 	}
 }
 
-double difference(const Mat &prev, const Mat &next, Mat *buffer, const unsigned int area_side = 5){
-	
 
-	return 10;
+/*======== DIFFERENCE FUNCTION IMPLEMENTATION ==========*/
+
+
+typedef cv::Point3_<uchar> Pixel;
+class Operator{ // An operator used by Mat::forEach()
+	private:
+		Operator();
+		const Mat *prev;
+		const Mat *next;
+		int halfside;
+		double *diff; // Buffer for difference calculus
+
+	public:
+		Operator(const Mat *prev, const Mat *next, const unsigned int side, double *diff_buffer){
+			assert(prev->dims == next->dims && prev->size() == next->size() && prev->channels() == next->channels());
+			assert(diff_buffer != NULL);
+			this->diff = diff_buffer;
+			this->prev = prev;
+			this->next = next;
+			this->halfside = (int) side/2;
+		}
+
+		// Local difference operation
+		void operator()(Pixel &pixel, const int * pos) const{
+			// Submatrix extraction around current pixel (O(1))
+			Range r_x = Range(max(pos[0]-halfside, 0), min(pos[0]+halfside+1, this->prev->rows));
+			Range r_y = Range(max(pos[1]-halfside, 0), min(pos[1]+halfside+1, this->prev->cols));
+			const Mat sub_prev = this->prev->operator()(r_x, r_y);
+			const Mat sub_next = this->next->operator()(r_x, r_y);
+
+			// Submatrix difference calculation
+			Scalar sum_diff = sum(sub_next) - sum(sub_prev); // Difference on each channel
+			this->diff[pos[0]*prev->cols + pos[1]] = sum(sum_diff)[0] / (sub_prev.rows * sub_prev.cols); // Total difference
+
+			//IDEA: Apply a log function to reduce the probability of having a 'nan'
+			//TODO: Find a "fast" log approximation
+		}
+};
+
+double difference(Mat &prev, const Mat &next, Mat *buffer, const unsigned int area_side = 5){
+	//Note: Buffer are used because of the "const" qualifier of Operator::operator() requiered by Mat::forEach
+	unsigned int buff_dim = next.rows*next.cols;
+	double *diff_buffer = new double[buff_dim]; // One case for each computed pixel to prevent parallel issue
+	Operator op = Operator(&prev, &next, area_side, diff_buffer);
+	buffer->forEach<Pixel>(op);
+	double ret = 0;
+	for (unsigned int i = 0; i < buff_dim; i++){
+		ret += diff_buffer[i];
+	}
+	delete[] diff_buffer;
+	cout << "Difference: " << ret << endl;
+	return ret;
 }
