@@ -5,23 +5,24 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/io.h>
-#include <stdio.h>
+#include <cstdio>
+#include <cstdlib>
 #include <unistd.h>
 #include <assert.h>
 #include <iostream>
 #include <cstring>
+#include <random>
 
 using namespace std;
 using namespace cv;
 
-
-#define SKIP_FRAMES 10
+#define SKIP_FRAMES 100
 #define SKIP_SECONDS 1.2
-#define PRINT_INTERVAL 100  // No print: 0
-#define MAX_FRAME_IDX 20     // No limit: 0
+#define PRINT_INTERVAL 5  // No print: 0
+#define MAX_FRAME_IDX 0     // No limit: 0
 #define DFLT_MEAN_COUNTED 20
-#define THRESHOLD_COEF 2
-#define WRITE true
+#define THRESHOLD_COEF 0.25
+#define SAVE_CHANCE 0.2
 
 //TODO: Un truc d'input propre avec des arguments variables et tout !!
 //TODO: Factoriser et mettre dans des fonctions ce qui peut l'être pour simplifier la lecture du main
@@ -34,6 +35,7 @@ using namespace cv;
 /*======== SUBFUNCTIONS DECLARATION ==========*/
 
 void skip_frames(VideoCapture &video, const unsigned int nb_frames, unsigned int &frames_index);
+void get_next_frame(VideoCapture &video, Mat &prev, Mat &curr, unsigned int &index);
 double difference(const Mat &prev, const Mat &next, Mat *buffer, const unsigned int area_side);
 void write_frames(const Mat &prev, const Mat &next, string prefix, unsigned int index);
 void check_directory(const char *path);
@@ -54,7 +56,6 @@ int main(int argc, char** argv)
 	assert(MAX_FRAME_IDX >= 0);
 	assert(DFLT_MEAN_COUNTED > 0);
 	assert(THRESHOLD_COEF > 0);
-	//assert(typeof(WRITE) == bool);
 
  	// Print usage if not enough parameters
 	if (argc != PARAM+1){
@@ -69,6 +70,7 @@ int main(int argc, char** argv)
 		return -1;
 	}
 
+	bool verbose = true;
 	// Building directory if doesn't exists
 	check_directory(argv[2]);
 
@@ -86,75 +88,94 @@ int main(int argc, char** argv)
 	double height    = video.get(CV_CAP_PROP_FRAME_HEIGHT);
 	double fps       = video.get(CV_CAP_PROP_FPS);
 	double nb_frames = video.get(CV_CAP_PROP_FRAME_COUNT);
-	cout << "Video Properties: " << width << "x" << height
-	 << ", " << fps << " fps, " << nb_frames << " frames." << endl;
+	if (verbose){
+		cout << "Video Properties: " << width << "x" << height
+		<< ", " << fps << " fps, " << nb_frames << " frames." << endl;
+	}
 
 	// Parameters initialisation
     Mat prev_frame, curr_frame;
 	video >> prev_frame; // Getting first frame
 	video >> curr_frame; // Getting second frame
-	Mat *diff_frame = new Mat(prev_frame.size(), prev_frame.type()); // Buffer for 
-
+	Mat *diff_frame = new Mat(prev_frame.size(), prev_frame.type()); // Buffer for difference picture
 	unsigned int curr_frame_idx = 1;
 	double diff, diff_coef, mean = 0; // The mean of all computed differences
-	unsigned int mean_counter = 0;    // Counter on how many means were calculated
+	unsigned int loop_idx = 0;    // Counter on how many means were calculated
 	unsigned int max_frame_idx = MAX_FRAME_IDX == 0 ? nb_frames + 1 : MAX_FRAME_IDX;
-	cout << max_frame_idx << endl;
+	float r;
 
 	// Main Loop
 	while(curr_frame_idx < max_frame_idx && !curr_frame.empty()){ // While frames remain
 		skip_frames(video, SKIP_FRAMES, curr_frame_idx);
+		get_next_frame(video, prev_frame, curr_frame, curr_frame_idx);
+		if (curr_frame.empty()){
+			break;
+		}
 
 		// Displaying script advancement
-		if (PRINT_INTERVAL != 0 && curr_frame_idx % PRINT_INTERVAL == 0){
+		if (verbose && PRINT_INTERVAL != 0 && loop_idx % PRINT_INTERVAL == 0){ //FIXME
 			cout << "Frame: " << curr_frame_idx
 			<< "\tMean: " << mean
 			<< "\tMean coef: " << diff_coef << endl;
 		}
 
 		// Computing difference between frames
-		diff = difference(prev_frame, curr_frame, diff_frame, 5); // Returns the difference matrix and the value
-		cout << "Difference: " << diff << endl;
+		diff = abs(difference(prev_frame, curr_frame, diff_frame, 10)); // Returns the difference matrix and the value
+		//cout << "Difference: " << diff << endl; //Remove me after
 
 		// Ajusting mean
-		if (mean_counter == 0){ mean = mean + diff; mean_counter++;}
-		else {mean += (diff - mean)/mean_counter; mean_counter++;}
+		if (loop_idx == 0){mean = mean + diff;}
+		else {mean += (diff - mean)/loop_idx;}
 
 		// If difference is unusually high, write the picture into the given directory
-		diff_coef = (diff - mean)/mean;
-		if (WRITE
-		 && curr_frame_idx > DFLT_MEAN_COUNTED
-		 && mean != 0 
-		 && (diff_coef < -THRESHOLD_COEF
-		  || THRESHOLD_COEF < diff_coef)){
-			cout << "\tDifference: " << diff_coef << " at frames " << curr_frame_idx-1 << " " << curr_frame_idx << endl;
+		diff_coef = abs((diff - mean))/mean;
+		//cout << mean << "\t" << diff << ":\t" << diff_coef << endl;
+
+		r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+		if (r <= SAVE_CHANCE
+		 && loop_idx > DFLT_MEAN_COUNTED
+		 && (diff_coef < THRESHOLD_COEF)){
+			if (verbose){
+				cout << "Difference Ratio: " << diff_coef << " at frames " << curr_frame_idx-SKIP_FRAMES << " " << curr_frame_idx << endl;
+			}
 			write_frames(prev_frame, curr_frame, output_prefix, curr_frame_idx);
+			get_next_frame(video, prev_frame, curr_frame, curr_frame_idx);
 		}
 
-		// Saving frame for next step
-		prev_frame.release();
-		prev_frame = curr_frame;
+		loop_idx++;
 	}
 
 	// Cleaning memory
+	prev_frame.release();
+	curr_frame.release();
   	video.release();
 	delete diff_frame;
 
-	cout << "Exited successfully." << endl;
+	if (verbose){
+		cout << "Exited successfully." << endl;
+	}
     return 0;
 }
 
 
 /*======== SUBFUNCTIONS IMPLEMENTATION ==========*/
 
+void get_next_frame(VideoCapture &video, Mat &prev, Mat &curr, unsigned int &index){
+	prev.release();
+	curr.copyTo(prev);
+	curr.release();
+	video >> curr;
+	index++;
+}
 
 void write_frames(const Mat &prev, const Mat &next, string prefix, unsigned int index){
-	if (imwrite(prefix+to_string(index-1)+".jpg", prev)
-	&& imwrite(prefix+to_string(index)+".jpg", next)){
-		cout << "Wrote frames " << index-1 << " " << index
-		<< " as "+prefix+to_string(index-1)+".jpg" << endl;
+	bool a = imwrite(prefix+to_string(index-SKIP_FRAMES)+"_IN.jpg", prev);
+	bool b = imwrite(prefix+to_string(index)+"_OUT.jpg", next);
+	if (a && b){
+		cout << "Wrote frames " << index-SKIP_FRAMES << " " << index
+		<< " as "+prefix+to_string(index-SKIP_FRAMES)+".jpg" << endl;
 	} else {
-		cerr << "Failed to write frames " << index-1 << " "
+		cerr << "Failed to write frames " << index-SKIP_FRAMES << " "
 		<< index << "as" << prefix << endl;
 	}
 }
@@ -171,15 +192,14 @@ void check_directory(const char *path){
 		cerr << "Fatal Error: " << path << " is not a directory" << endl;
 		exit(EXIT_FAILURE);
 	}
-	// else, directory already exists
 }
 
 void skip_frames(VideoCapture &video, const unsigned int nb_frames, unsigned int &frames_index){
-	Mat tmp;
+	Mat *tmp = new Mat();
 	for (unsigned int i = 0; i < nb_frames; i++){
-		video >> tmp;
+		video >> *tmp;
 		frames_index++;
-		tmp.release();
+		tmp->release();
 	}
 }
 
@@ -208,7 +228,7 @@ class Operator{ // An operator used by Mat::forEach()
 		}
 
 		~Operator(){
-			delete[] this->diff;
+			//delete[] this->diff; //Segfault here
 		}
 
 		// Local difference operation (called for each pixel)
@@ -221,10 +241,9 @@ class Operator{ // An operator used by Mat::forEach()
 
 			// Submatrix difference calculation
 			Scalar sum_diff = sum(sub_next) - sum(sub_prev); // Difference on each channel
-			this->diff[pos[0]*prev->cols + pos[1]] = sum(sum_diff)[0] / (sub_prev.rows * sub_prev.cols); // Total difference
+			this->diff[pos[0]*prev->cols + pos[1]] = sum(sum_diff)[0] / (sub_prev.rows * sub_prev.cols); // Total difference ratio
 
 			//TODO: Set the pixel value according to the diff (care about double -> uchar)
-
 			//TODO: Apply a log function to reduce the probability of having a 'nan'
 			//TODO: Find a "fast" log approximation in c++
 		}
@@ -234,18 +253,24 @@ class Operator{ // An operator used by Mat::forEach()
 		double getDiff(){
 			double ret = 0;
 			for (unsigned int i = 0; i < this->diff_len; i++){
-				cout << i << " " << this->diff[i] << endl;
-				ret += this->diff[i]; //Segfault here
+				ret += abs(this->diff[i]);
 			}
-			cout << ret << endl;
 			return ret;
 		}
 };
 
+//TODO: Une autre fonction difference pour laisser le choix à l'utilisateur de stocker ou non la matrice "différence";
 double difference(const Mat &prev, const Mat &next, Mat *buffer, const unsigned int area_side = 5){
 	//Note: Buffer are used because of the "const" qualifier of Operator::operator() requiered by Mat::forEach
 	Operator op = Operator(&prev, &next, area_side);
 	buffer->forEach<Pixel>(op);
-	double ret = 0;//op.getDiff();
-	return ret;
+	return op.getDiff();
 }
+
+/*
+USER-FRIENDLY:
+	- Adust macros (give them as argument)
+	- Add the possibility to add a constraint function
+	- Python Interface
+	- 
+ */
