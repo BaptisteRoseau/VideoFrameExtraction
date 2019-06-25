@@ -226,7 +226,7 @@ int process(const char *in_path, const char *out_dir,
 		video >> curr_frame; // Getting second frame
 		unsigned int prev_frame_idx = 0;
 		unsigned int curr_frame_idx = 1;
-		unsigned int loop_idx = 0;    // Counter on how many means were calculated
+		unsigned int loop_idx = 0;        // Also used for as mean counter
 		double diff, diff_coef, mean = 0; // The mean of all computed differences
 		float r;
 		bool fff_verified, sff_verified;
@@ -305,14 +305,14 @@ int process(const char *in_path, const char *out_dir,
 			loop_idx++;
 		}
 
-		if (save_in_between_frames){
-			//TODO: Reparcourir la video
-		}
-
 		// Cleaning memory
 		prev_frame.release();
 		curr_frame.release();
 		video.release();
+
+		if (save_in_between_frames){
+			//TODO: Reparcourir la video
+		}
 	}
 
 	delete vid_path_stack;
