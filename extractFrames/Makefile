@@ -11,15 +11,18 @@ LIBS= -lopencv_gapi\
 -lopencv_ml\
 -lopencv_features2d\
 -lopencv_objdetect\
--lopencv_flann
+-lopencv_flann\
+-lstdc++fs
 
 INCLUDE= -I /usr/local/include/opencv4/
 
-WALL= -Wall -Wextra -Wno-unused-variable -Wno-unused-parameter -g
+WALL= -std=c++17 -Wall -Wextra -Wno-unused-variable -Wno-unused-parameter -g
 
 SRC=extractFrames.cpp
 OUTPUT=extractFrames
 ARGS= ./AccelWorld1.mp4 testDir
+
+DD_DIR_ARGS=/media/broseau/BR_MULTIMEDIA/Disque\ Dur/Vidéos/Animes testDir
 
 $(OUTPUT): $(SRC)
 	g++ $(WALL) $(INCLUDE) $(SRC) $(LIBS) -o $(OUTPUT)
@@ -33,8 +36,17 @@ run: $(OUTPUT)
 gdb: $(OUTPUT)
 	gdb -ex run --args $(OUTPUT) $(ARGS)
 
+lib:
+	echo TODO avec -NOMAIN
+
+dir: $(OUTPUT)
+	./$(OUTPUT) $(DD_DIR_ARGS)
+
 valgrind: $(OUTPUT)
 	valgrind --leak-check=full ./$(OUTPUT) $(ARGS)
+
+valgrinddir: $(OUTPUT)
+	valgrind --leak-check=full ./$(OUTPUT) $(DD_DIR_ARGS)
 
 clean:
 	rm -rf *.o
