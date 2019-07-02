@@ -16,6 +16,7 @@
 #include <fstream>
 #include <filesystem>
 #include <limits.h>
+#include <random>
 
 using namespace std;
 using namespace cv;
@@ -23,14 +24,15 @@ namespace fs = filesystem;
 
 #define DISPLAY(stream) if (verbose){stream;}
 #define BET_FRAMES_DIRNAME "in_between"
-#define SAME_FRAME_THRESHOLD 5
+#define SAME_FRAME_THRESHOLD 15
 
-//TODO: BOUCHER LES FUITES MEMOIRES !!!!!! (Il en reste un peu mais sans plus)
-//TODO: Un autre script avec une condition que sur 1 image ?
-//TODO: Renommer de façon plus explicite
-//TODO: Factoriser !!
+//TODO: Fix the reachable memory leaks
 
 /*======== SUBFUNCTIONS IMPLEMENTATION ==========*/
+
+inline double my_random(void){
+	return ((double) rand()) / RAND_MAX;
+}
 
 /* String and directory tools */
 bool is_supported_videofile(const fs::path path){
@@ -38,7 +40,8 @@ bool is_supported_videofile(const fs::path path){
 		return false;
 	}
 	string ext = path.extension();
-	 //TODO: Trouver les extensions supportées et les ajouter ici
+	//TODO: Find OpenCV supported file extension and add it here with a switch,
+	//Then remove the commentary into 'get_video_files'
 	return true;
 }
 
@@ -58,7 +61,7 @@ stack<string> *get_video_files(const char *in_path, double file_proportion, bool
 		double r;
 		for(auto& p: fs::recursive_directory_iterator(in_path)){
 			if (p.is_regular_file()){// && is_supported_videofile(p.path())){
-				r = static_cast <double> (rand()) / static_cast <double> (RAND_MAX);
+				r = my_random();
 				if (r < file_proportion){
 					vid_files->push((string) p.path());
 					DISPLAY(cout << "Added: " << p.path() << '\n');
@@ -70,7 +73,7 @@ stack<string> *get_video_files(const char *in_path, double file_proportion, bool
 
 	// Error case
 	cerr << "Fatal Error: " << in_path << " is not a file nor a directory." << endl;
-	exit(EXIT_FAILURE);
+	return NULL;
 }
 
 string get_filename(const string &filepath){
@@ -89,18 +92,19 @@ void str_normalize(string &s){
 	}
 }
 
-void build_output_dir(const char *path){
+int build_output_dir(const char *path){
 	struct stat info;
 	if(stat(path, &info) != 0){
 		if (mkdir(path, S_IRWXU) != 0){
 			cerr << "Fatal Error: Couldn't create " << path << endl;
-			exit(EXIT_FAILURE);
+			return EXIT_FAILURE;
 		}
 	}
 	else if (!S_ISDIR(info.st_mode)){ 
 		cerr << "Fatal Error: " << path << " is not a directory" << endl;
-		exit(EXIT_FAILURE);
+		return EXIT_FAILURE;
 	}
+	return EXIT_SUCCESS;
 }
 
 /* Frame Management tools */
@@ -121,12 +125,19 @@ bool are_identic_frames(const Mat &m1, const Mat &m2){
 	assert(m1.dims       == m2.dims 
 		&& m1.size()     == m2.size() 
 		&& m1.channels() == m2.channels());
-	Mat diff = m1 - m2;
-	double minVal, maxVal;
-	Point minLoc, maxLoc;
-	cout << "Empty: " << diff.empty() << endl;
-	minMaxLoc(diff, &minVal, &maxVal, &minLoc, &maxLoc);
-	return maxVal < SAME_FRAME_THRESHOLD;
+	unsigned char *m1_data = (unsigned char*)(m1.data);
+	unsigned char *m2_data = (unsigned char*)(m2.data);
+	for (int i = 0; i < m1.rows; i++){
+		for (int j = 0; j < m1.cols; j++){
+			for (int k = 0; k < m1.channels(); k++){
+				if (abs((int) m1_data[m1.step*i + j*m1.channels() + k]
+				 - m2_data[m2.step*i + j*m2.channels() + k]) > SAME_FRAME_THRESHOLD){
+					return false;
+				}
+			}
+		}
+	}
+	return true;
 }
 
 void get_next_frame(VideoCapture &video, Mat &prev, Mat &curr){
@@ -154,18 +165,20 @@ void video_skip_frames_stock(VideoCapture &video, const unsigned int nb_frames, 
 		}
 	} else {
 		Mat *tmp_mat;
-		Mat *tmp_mat_prev = new Mat(); //TODO: Initialize tmp_mat_prev
+		Mat *tmp_mat_prev = new Mat();
 		for (unsigned int i = 1; i < nb_frames; i++){
-			tmp_mat = new Mat();
+			tmp_mat = new Mat(); // New matrix to be stocked into queue
 			video >> (*tmp_mat);
 			if (tmp_mat->empty()){ break;}
-			cout << are_identic_frames(*tmp_mat_prev, *tmp_mat);
-			if (!tmp_mat_prev->empty()
-				&& !are_identic_frames(*tmp_mat_prev, *tmp_mat)){
+			if (!tmp_mat_prev->empty() && !are_identic_frames(*tmp_mat_prev, *tmp_mat)){
 				in_btw_frm_stocked.push(tmp_mat);
+				tmp_mat_prev->release();
+				*tmp_mat_prev = tmp_mat->clone();
+			} else {
+				tmp_mat_prev->release();
+				*tmp_mat_prev = tmp_mat->clone();
+				delete tmp_mat;
 			}
-			tmp_mat_prev->release();
-			*tmp_mat_prev = tmp_mat->clone();
 		}
 		delete tmp_mat_prev;
 	}
@@ -178,76 +191,87 @@ void empty_frame_stock(queue<Mat*> &in_btw_frm_stocked){
 	}
 }
 
-
-
-//TODO: doc
 /**
- * @brief 
+ * @brief Write frames from a video file into the output directory with various adjustable parameters.\
+ * Also allow the possibility to save the in-between frames. 
  * 
- * @param in_path 
- * @param out_dir 
- * @param skip_frames 
- * @param skip_seconds 
- * @param stop_at_frame 
- * @param display_interval 
- * @param min_mean_counted 
- * @param save_in_between_frames 
- * @param stock_in_between_frames 
- * @param remove_identic_frames 
- * @param compute_difference 
- * @param verbose 
- * @param diff_threshhold 
- * @param pic_save_proba 
- * @param file_proportion 
- * @param timeout 
- * @param first_frame_func 
- * @param second_frame_func 
- * @return int 
+ * @param in_path The path to the video file or directory containing video files.
+ * @param out_dir The path to the output directory. If it doesn't exist, a new directory will be created.
+ * @param skip_frames The interval between each pair of frames that have to be saved/compared.
+ * @param skip_seconds Same as skip_frames, but the unit is in seconds instead. You cannot skip by frames AND by seconds.
+ * @param start_at_frame The starting frame index.
+ * @param stop_at_frame The stoping frame index.
+ * @param display_interval The interval for information display. This is not by frame, but by loop. Each 'skip_frame' frames count for 1 loop. 
+ * @param min_mean_counted The number of difference that have to be computed in order to have a meaningful mean.
+ * @param save_in_between_frames Whether or not in-between frames have to be saved.
+ * @param stock_in_between_frames Whether or not in-between frames have to be stocked in memory or saved later while relooping the video.
+ * @param remove_identic_frames Whether or not identic frames has to be removed or not.
+ * @param compute_difference Whether or not the difference between each pair of frames has to be calculated or not, in order to save only pictures that aren't very different.
+ * @param verbose Whether or not informations has to be displayed on the screen.
+ * @param diff_threshhold The threshold idicating when frames are considered to too different (values are around 0~2).
+ * @param pic_save_proba The probability to save a pair of frames or not (unselected pair won't compute difference or user-specified test functions)
+ * @param file_proportion The probability compute a found video or not (if too many videos are in the same directory)
+ * @param timeout A timeout in seconds. Note the if 'stock_in_between_frames' is set to 0, the last video in-between frames might not be all saved. 0 means 'no timeout'.
+ * @param first_frame_func A user-specified function to test a property on the first frame. If this property if not verified, the pair of frames won't be saved.
+ * @param second_frame_func A user-specified function to test a property on the second frame. If this property if not verified, the pair of frames won't be saved.
+ * @param compare_frame_func A user-specified function to test a property on the pair of frames. If this property if not verified, the pair of frames won't be saved.
+ * @return int Success : 0, Failure : 1
  */
 int exctractFrames(const char *in_path, const char *out_dir,
-			unsigned int skip_frames             = 0,
+			unsigned int skip_frames             = 1,
 			double       skip_seconds            = 0,
+			unsigned int start_at_frame          = 0,
 			unsigned int stop_at_frame           = 0,
 			unsigned int display_interval        = 1,
-			unsigned int min_mean_counted        = 20,
 			bool         save_in_between_frames  = true,
 			bool         stock_in_between_frames = true,
-			bool         remove_identic_frames   = false,  //TODO: Tester
-			bool         compute_difference      = false, //TODO: Boucher la fuite memoire
+			bool         remove_identic_frames   = false,
+			bool         compute_difference      = false,
+			unsigned int min_mean_counted        = 20,
+			double       diff_threshhold         = 0.25,
 			bool         verbose                 = true,
-			double       diff_threshhold         = 1,
 			double       pic_save_proba          = 1,
 			double       file_proportion         = 1,
 			double       timeout                 = 0,     //In seconds
 			bool (*first_frame_func)(const Mat &)  = NULL,
-			bool (*second_frame_func)(const Mat &) = NULL){
-
-	// Setting default skip frames to 1
-	if (skip_frames == 0 && skip_seconds == 0){
-		skip_frames = 1;
-	}
+			bool (*second_frame_func)(const Mat &) = NULL,
+			bool (*compare_frame_func)(const Mat &, const Mat &) = NULL){
 
 	// Parameters verification
-	assert(skip_frames == 0 || skip_seconds == 0);
+	assert(skip_frames >= 0);
 	assert(skip_frames != 0 || skip_seconds != 0);
-	assert(skip_seconds >= 0);
-	assert(timeout >= 0);
-	assert(diff_threshhold >= 0);
+	assert(0 <= skip_seconds);
+	assert(0 <= timeout);
+	assert(0 <= diff_threshhold);
 	assert(0 <= pic_save_proba && pic_save_proba <= 1);
 	assert(0 <= file_proportion && file_proportion <= 1);
-	//TODO: Ajouter des verfication
+	assert(start_at_frame < stop_at_frame);
 
 	// Retrieving video file paths into vid_path_stack
 	stack<string> *vid_path_stack = get_video_files(in_path, file_proportion, verbose);
 
 	// Building output directory if doesn't exists
-	build_output_dir(out_dir);
+	if (vid_path_stack == NULL || build_output_dir(out_dir)){
+		return EXIT_FAILURE;
+	}
 	string str_out_dir = out_dir;
 
 	// Global parameter initialisation
 	unsigned int global_counter = 0;
-	srand(time(NULL));
-	time_t t0 = time(NULL);
+	srand(time(NULL)+getpid());
+	double t0 = time(NULL);
+
+	// Parameters initialisation
+		Mat prev_frame, curr_frame;
+		unsigned int curr_frame_idx, prev_frame_idx, loop_idx; // loop_idx is also used for as mean counter
+		double diff, diff_coef, mean; // The mean of all computed differences
+		float r;
+		bool fff_verified, sff_verified, cff_verified;
+		queue<unsigned int> in_btw_frm_indexes;
+		queue<Mat*> in_btw_frm_stocked;
+		string frame_path;
+		double width, height, fps, nb_frames, _timeout;
+		unsigned int _skip_frames, _stop_at_frame;
 
 	while (!vid_path_stack->empty()){
 		// Retrieving video path
@@ -268,36 +292,33 @@ int exctractFrames(const char *in_path, const char *out_dir,
 		fs::directory_entry dir_entry = fs::directory_entry(curr_file_out_dir);
 		
 		// Video settings
-		double width     = video.get(CV_CAP_PROP_FRAME_WIDTH);
-		double height    = video.get(CV_CAP_PROP_FRAME_HEIGHT);
-		double fps       = video.get(CV_CAP_PROP_FPS);
-		double nb_frames = video.get(CV_CAP_PROP_FRAME_COUNT);
+		width     = video.get(CV_CAP_PROP_FRAME_WIDTH);
+		height    = video.get(CV_CAP_PROP_FRAME_HEIGHT);
+		fps       = video.get(CV_CAP_PROP_FPS);
+		nb_frames = video.get(CV_CAP_PROP_FRAME_COUNT);
 		DISPLAY(cout << "\nLoaded " << filename << "\nVideo Properties: " << width << "x" << height
 			<< ", " << fps << " fps, " << nb_frames << " frames." << endl);
 
 		// Arguments interpretation
-		unsigned int _skip_frames   = skip_frames == 0 ? max(1., skip_seconds*fps) : skip_frames;
-		unsigned int _stop_at_frame = stop_at_frame == 0 ? nb_frames + 1 : stop_at_frame;
-		double _timeout = timeout == 0 ? DBL_MAX : timeout; 
+		_skip_frames   = skip_seconds != 0 ? max(1., skip_seconds*fps) : skip_frames;
+		_stop_at_frame = stop_at_frame == 0 ? nb_frames + 1 : stop_at_frame;
+		_timeout = timeout == 0 ? DBL_MAX : timeout; 
 		if (_skip_frames == 1 && save_in_between_frames){
 			DISPLAY(cout << "Error: Cannot save in-between frame wile skiping only 1 frame.\n\
 			No in-between frame will be saved.")
 			sleep(5);
 		}
 
+		// Placing the video to the start point
+		video_skip_frames(video, start_at_frame);
+
 		// Parameters initialisation
-		Mat prev_frame, curr_frame;
 		video >> prev_frame; // Getting first frame
 		video >> curr_frame; // Getting second frame
-		unsigned int curr_frame_idx = video.get(CV_CAP_PROP_POS_FRAMES);;
-		unsigned int prev_frame_idx = curr_frame_idx - 1;
-		unsigned int loop_idx = 0;        // Also used for as mean counter
-		double diff, diff_coef, mean = 0; // The mean of all computed differences
-		float r;
-		bool fff_verified, sff_verified;
-		queue<unsigned int> in_btw_frm_indexes;
-		queue<Mat*> in_btw_frm_stocked;
-		string frame_path;
+		curr_frame_idx = video.get(CV_CAP_PROP_POS_FRAMES);
+		prev_frame_idx = curr_frame_idx - 1;
+		loop_idx = 0;
+		mean = 0;
 
 		// Main Loop
 		while(curr_frame_idx < _stop_at_frame && !curr_frame.empty()){ // While frames remain
@@ -308,6 +329,7 @@ int exctractFrames(const char *in_path, const char *out_dir,
 			} else {
 				video_skip_frames(video, _skip_frames);
 			}
+			get_next_frame(video, prev_frame, curr_frame);
 			curr_frame_idx = video.get(CV_CAP_PROP_POS_FRAMES);
 			if (curr_frame.empty()){
 				break;
@@ -331,16 +353,16 @@ int exctractFrames(const char *in_path, const char *out_dir,
 			if (display_interval != 0 && loop_idx % display_interval == 0){
 				if (!compute_difference){
 					DISPLAY(cout << "Frame: " << curr_frame_idx
-					<< format(" (%.2f %%)", min(100., ((double) 100*curr_frame_idx)/_stop_at_frame)) << endl);
+					<< format(" (%.2f %%)", min(100., ((double) 100*(curr_frame_idx - start_at_frame))/(_stop_at_frame-start_at_frame))) << endl);
 				} else {
 					DISPLAY(cout << "Frame: " << curr_frame_idx
-					<< format(" (%.2f %%)", min(100., ((double) 100*curr_frame_idx)/_stop_at_frame)) <<
+					<< format(" (%.2f %%)", min(100., ((double) 100*(curr_frame_idx - start_at_frame))/(_stop_at_frame-start_at_frame))) <<
 					"\tMean: " << mean << "\tMean coef: " << diff_coef << endl);
 				}
 			}
 
 			// Chance to save this frame
-			r = static_cast <double> (rand()) / static_cast <double> (RAND_MAX);
+			r = my_random();
 
 			// Apply user custom restrictions only if necessary
 			if (r <= pic_save_proba){
@@ -349,14 +371,17 @@ int exctractFrames(const char *in_path, const char *out_dir,
 					if (are_identic_frames(prev_frame, curr_frame)){
 						fff_verified = false;
 					} else {
-						fff_verified = first_frame_func == NULL  ? true : first_frame_func(prev_frame);
-						sff_verified = second_frame_func == NULL ? true : second_frame_func(curr_frame);
+						fff_verified = first_frame_func == NULL   ? true : first_frame_func(prev_frame);
+						sff_verified = second_frame_func == NULL  ? true : second_frame_func(curr_frame);
+						cff_verified = compare_frame_func == NULL ? true : compare_frame_func(prev_frame, curr_frame);
+						
 					}
 				}
 				// If identic frames don't need to be removed
 				else {
-					fff_verified = first_frame_func == NULL  ? true : first_frame_func(prev_frame);
-					sff_verified = second_frame_func == NULL ? true : second_frame_func(curr_frame);
+					fff_verified = first_frame_func == NULL   ? true : first_frame_func(prev_frame);
+					sff_verified = second_frame_func == NULL  ? true : second_frame_func(curr_frame);
+					cff_verified = compare_frame_func == NULL ? true : compare_frame_func(prev_frame, curr_frame);
 				}
 			// If the probability to save this picture is too low, don't save it
 			} else {
@@ -365,9 +390,12 @@ int exctractFrames(const char *in_path, const char *out_dir,
 			
 			if (fff_verified
 			&& sff_verified
+			&& cff_verified
 			&& (!compute_difference
-			|| (loop_idx > min_mean_counted
-				&& diff_coef < diff_threshhold))){
+			  || (loop_idx > min_mean_counted
+				&& diff_coef < diff_threshhold))
+			&& (!remove_identic_frames
+			  || (!are_identic_frames(prev_frame, curr_frame)))){
 				// Displaying information about difference if needed
 				if (compute_difference){
 					DISPLAY(cout << "Difference Ratio: " << diff_coef 
@@ -436,11 +464,7 @@ int exctractFrames(const char *in_path, const char *out_dir,
 				}
 
 				global_counter++;
-				get_next_frame(video, prev_frame, curr_frame);
 			}
-
-			empty_frame_stock(in_btw_frm_stocked);
-			loop_idx++;
 
 			// Cleaning memory and exiting program if timeout is reached
 			if (difftime(time(NULL), t0) > _timeout){
@@ -450,8 +474,11 @@ int exctractFrames(const char *in_path, const char *out_dir,
 				empty_frame_stock(in_btw_frm_stocked);
 				delete vid_path_stack;
 				DISPLAY(cout << "Timeout reached.\n");
-				exit(EXIT_SUCCESS);
+				return EXIT_FAILURE;
 			}
+
+			empty_frame_stock(in_btw_frm_stocked);
+			loop_idx++;
 		}
 
 		// Cleaning memory
@@ -467,10 +494,14 @@ int exctractFrames(const char *in_path, const char *out_dir,
 				cerr << "Couldn't open " << filepath << endl;
 				continue;
 			}
+
+			// Moving the video to the start frame
+			video_skip_frames(video, start_at_frame);
+
 			// Parameters reinitialisation
 			video >> curr_frame; // Getting second frame
 			curr_frame_idx = video.get(CV_CAP_PROP_POS_FRAMES);
-			
+
 			unsigned int folder_id, frame_inf, frame_sup = 0;
 			while(true){ // break is computed later (curr_frame_idx must be modified)
 				// Getting next frame
@@ -485,7 +516,7 @@ int exctractFrames(const char *in_path, const char *out_dir,
 				}
 
 				DISPLAY(cout << "Saving in-between frames... "
-				<< format(" (%.2f %%) ", min(100., ((double) 100*curr_frame_idx)/_stop_at_frame))
+				<< format(" (%.2f %%) ", min(100., ((double) 100*(curr_frame_idx - start_at_frame))/(_stop_at_frame-start_at_frame)))
 				 << "\r");
 
 				if (curr_frame_idx > frame_sup){
@@ -531,13 +562,13 @@ int exctractFrames(const char *in_path, const char *out_dir,
 					empty_frame_stock(in_btw_frm_stocked);
 					delete vid_path_stack;
 					DISPLAY(cout << "Timeout reached.\nLast complete in-between frame folder: " << folder_id-1 << endl);
-					exit(EXIT_SUCCESS);
+					return EXIT_SUCCESS;
 				}
 
 			}
+			empty_frame_stock(in_btw_frm_stocked);
 			curr_frame.release();
 			video.release();
-			DISPLAY(cout << endl)
 		}
 	}
 
@@ -551,8 +582,6 @@ int exctractFrames(const char *in_path, const char *out_dir,
 
 /*======== DIFFERENCE FUNCTION IMPLEMENTATION ==========*/
 
-//FIXME
-
 typedef cv::Point3_<uchar> Pixel;
 class Operator{ // An operator used by Mat::forEach()
 	private:
@@ -562,6 +591,7 @@ class Operator{ // An operator used by Mat::forEach()
 		int halfside;
 		unsigned int diff_len;
 		double *diff; // Buffer for difference calculus
+		Mat diff_mat;
 
 	public:
 		Operator(const Mat *prev, const Mat *next, const unsigned int side){
@@ -571,10 +601,6 @@ class Operator{ // An operator used by Mat::forEach()
 			this->halfside = (int) side/2;
 			this->diff_len = next->rows*next->cols;
 			this->diff     = new double[this->diff_len]; // One case for each computed pixel to prevent parallel issue
-		}
-
-		~Operator(){
-			delete[] this->diff; //Segfault here
 		}
 
 		// Local difference operation (called for each pixel)
@@ -587,10 +613,8 @@ class Operator{ // An operator used by Mat::forEach()
 
 			// Submatrix difference calculation
 			Scalar sum_diff = sum(sub_next) - sum(sub_prev); // Difference on each channel
-			this->diff[pos[0]*prev->cols + pos[1]] = abs(sum(sum_diff)[0]) / (sub_prev.rows * sub_prev.cols); // Total difference ratio
-
-			//TODO: Apply a log function to reduce the probability of having a 'nan'
-			//TODO: Find a "fast" log approximation in c++
+			this->diff[pos[0]*prev->cols + pos[1]] 
+				= abs(sum(sum_diff)[0]) / (sub_prev.rows * sub_prev.cols); // Total difference ratio
 		}
 
 		// Retrieve difference value
@@ -600,6 +624,7 @@ class Operator{ // An operator used by Mat::forEach()
 			for (unsigned int i = 0; i < this->diff_len; i++){
 				ret += this->diff[i];
 			}
+			delete[] this->diff; // For unknown segfault issue, this delete is here instead of the class destructor
 			return ret;
 		}
 };
@@ -613,15 +638,18 @@ double difference(const Mat &prev, const Mat &next, const unsigned int area_side
 
 
 
-#ifndef NOMAIN
+#ifndef BOOST_PYTHON //TODO: ifdef
 /*======== PYTHON ==========*/
 
-/* #include <boost/python.hpp>
+#include <boost/python.hpp>
 BOOST_PYTHON_MODULE(exctractFrames){
     using namespace boost::python;
     def("exctractFrames", exctractFrames);
-} */
+}
+#endif
 
+
+#ifndef NOMAIN
 /*======== MAIN ==========*/
 
 void usage(char* name){
@@ -636,22 +664,24 @@ int main(int argc, char** argv)
 		return -1;
 	}
 	exctractFrames(argv[1], argv[2],
-			30,    // skip_frames
-			0,     // skip_seconds
-			300,   // stop_at_frame
-			1,     // display_interval
-			20,    // min_mean_counted
+			0,    // skip_frames
+			1,     // skip_seconds
+			10000,    // start_at_frame
+			10500,   // stop_at_frame
+			5,     // display_interval
 			true,  // save_in_between_frames
-			false, // stock_in_between_frames
+			true, // stock_in_between_frames
 			true,  // remove_identic_frames
-			false, // compute_difference
-			false,  // verbose
-			1,     // diff_threshhold
+			true, // compute_difference
+			10,    // min_mean_counted
+			0.25,     // diff_threshhold
+			true,  // verbose
 			1,   // pic_save_proba
-			0.05,  // file_proportion
+			0.01,  // file_proportion
 			0,     // timeout
 			NULL,  // first_frame_func
-			NULL); // second_frame_func
+			NULL,  // second_frame_func
+			NULL); // compare_frame_func
     return 0;
 }
 #endif
