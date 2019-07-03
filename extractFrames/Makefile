@@ -17,6 +17,7 @@ LIBS= -lopencv_gapi \
 #-lpython3.6 \
 #-L/usr/lib/python3.6/config-3.6m-x86_64-linux-gnu/ \
 #-L/usr/lib/python3.6 \
+#-L/usr/lib/boost_1_68_0\
 #-lboost_python-py36
 
 INCLUDE= -I /usr/local/include/opencv4/ -I /usr/include/python3.6/
@@ -42,7 +43,7 @@ gdb: $(OUTPUT)
 	gdb -ex run --args $(OUTPUT) $(ARGS)
 
 lib: $(SRC)
-	g++ -DNOMAIN -fPIC $(WALL) $(INCLUDE) $(SRC) $(LIBS) -shared -o libextractframe.so
+	g++ -DNOMAIN -DUSE_PYTHON -fPIC $(WALL) $(INCLUDE) $(SRC) $(LIBS) -shared -o libextractframe.so
 
 testpy: lib
 	python3 test.py

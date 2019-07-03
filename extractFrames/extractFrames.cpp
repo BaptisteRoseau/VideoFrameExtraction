@@ -1,3 +1,6 @@
+#ifdef USE_PYTHON
+#include <Python.h> // Must be included first
+#endif
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/videoio/legacy/constants_c.h>
@@ -31,7 +34,8 @@ namespace fs = filesystem;
 /*======== SUBFUNCTIONS IMPLEMENTATION ==========*/
 
 inline double my_random(void){
-	return ((double) rand()) / RAND_MAX;
+	static std::random_device rd;
+	return ((double) rd() - rd.min()) / (double) (rd.max() - rd.min());
 }
 
 /* String and directory tools */
@@ -68,6 +72,7 @@ stack<string> *get_video_files(const char *in_path, double file_proportion, bool
 				}
 			}
 		}
+		//shuffle(vid_files); //TODO: Find a way to shuffle the queue...
 		return vid_files;
 	}
 
@@ -217,7 +222,7 @@ void empty_frame_stock(queue<Mat*> &in_btw_frm_stocked){
  * @param compare_frame_func A user-specified function to test a property on the pair of frames. If this property if not verified, the pair of frames won't be saved.
  * @return int Success : 0, Failure : 1
  */
-int exctractFrames(const char *in_path, const char *out_dir,
+extern int extractFrames(const char *in_path, const char *out_dir,
 			unsigned int skip_frames             = 1,
 			double       skip_seconds            = 0,
 			unsigned int start_at_frame          = 0,
@@ -228,7 +233,7 @@ int exctractFrames(const char *in_path, const char *out_dir,
 			bool         remove_identic_frames   = false,
 			bool         compute_difference      = false,
 			unsigned int min_mean_counted        = 20,
-			double       diff_threshhold         = 0.25,
+			double       diff_threshhold         = 0.20,
 			bool         verbose                 = true,
 			double       pic_save_proba          = 1,
 			double       file_proportion         = 1,
@@ -238,14 +243,13 @@ int exctractFrames(const char *in_path, const char *out_dir,
 			bool (*compare_frame_func)(const Mat &, const Mat &) = NULL){
 
 	// Parameters verification
-	assert(skip_frames >= 0);
 	assert(skip_frames != 0 || skip_seconds != 0);
 	assert(0 <= skip_seconds);
 	assert(0 <= timeout);
 	assert(0 <= diff_threshhold);
 	assert(0 <= pic_save_proba && pic_save_proba <= 1);
 	assert(0 <= file_proportion && file_proportion <= 1);
-	assert(start_at_frame < stop_at_frame);
+	assert(start_at_frame < stop_at_frame || stop_at_frame == 0);
 
 	// Retrieving video file paths into vid_path_stack
 	stack<string> *vid_path_stack = get_video_files(in_path, file_proportion, verbose);
@@ -258,7 +262,7 @@ int exctractFrames(const char *in_path, const char *out_dir,
 
 	// Global parameter initialisation
 	unsigned int global_counter = 0;
-	srand(time(NULL)+getpid());
+	//srand(time(NULL)+getpid());
 	double t0 = time(NULL);
 
 	// Parameters initialisation
@@ -404,7 +408,7 @@ int exctractFrames(const char *in_path, const char *out_dir,
 				}
 
 				// Creating directory if doesn't exist
-				frame_path = out_dir+(string) "/"+to_string(global_counter);
+				frame_path = out_dir+(string) "/"+to_string(global_counter)+"_4"; //TODO: remove the "_x"
 				dir_entry = fs::directory_entry(frame_path);
 				if (dir_entry.exists()){
 					DISPLAY(cout << "Removing " << dir_entry.path() << endl);
@@ -421,9 +425,7 @@ int exctractFrames(const char *in_path, const char *out_dir,
 				// Writing stocked in-between frames
 				if (save_in_between_frames && stock_in_between_frames){
 					// Creating in-between frames directory
-					frame_path = out_dir+(string) "/"
-								+to_string(global_counter)
-								+(string) "/"
+					frame_path += (string) "/"
 								+(string) BET_FRAMES_DIRNAME;
 					dir_entry = fs::directory_entry(frame_path);
 					if (dir_entry.exists()){
@@ -637,23 +639,100 @@ double difference(const Mat &prev, const Mat &next, const unsigned int area_side
 }
 
 
-
-#ifndef BOOST_PYTHON //TODO: ifdef
-/*======== PYTHON ==========*/
-
+/*========= BOOST =========*/
+#ifdef BOOST_PYTHON /* Can't work because BOOST only accept 15 args/function maximum */
 #include <boost/python.hpp>
-BOOST_PYTHON_MODULE(exctractFrames){
+
+BOOST_PYTHON_FUNCTION_OVERLOADS(ef_overloads, extractFrames, 2, 20) // For default arguments
+
+BOOST_PYTHON_MODULE(extractFrames){
     using namespace boost::python;
-    def("exctractFrames", exctractFrames);
+    def("extractFrames", extractFrames, ef_overloads());
 }
 #endif
 
 
-#ifndef NOMAIN
+/*======== PYTHON ==========*/
+#ifdef USE_PYTHON
+static PyObject *
+myFunc(PyObject *self, PyObject *args){
+    int error;
+	//Arguments list
+	const char *in_path;
+	const char *out_dir;
+	unsigned int skip_frames             = 1;
+	double       skip_seconds            = 0;
+	unsigned int start_at_frame          = 0;
+	unsigned int stop_at_frame           = 0;
+	unsigned int display_interval        = 1;
+	bool         save_in_between_frames  = true;
+	bool         stock_in_between_frames = true;
+	bool         remove_identic_frames   = false;
+	bool         compute_difference      = false;
+	unsigned int min_mean_counted        = 20;
+	double       diff_threshhold         = 0.20;
+	bool         verbose                 = true;
+	double       pic_save_proba          = 1;
+	double       file_proportion         = 1;
+	double       timeout                 = 0;
+	bool (*first_frame_func)(const Mat &)  = NULL;
+	bool (*second_frame_func)(const Mat &) = NULL;
+	bool (*compare_frame_func)(const Mat &, const Mat &) = NULL;
+
+	//TODO: Retrieve arguments and test this
+    if (!PyArg_ParseTuple(args, "ssuduuubbbbudbdddbbb",
+			&in_path, 
+			&out_dir,
+			&skip_frames,
+			&skip_seconds,
+			&start_at_frame,
+			&stop_at_frame,
+			&display_interval,
+			&save_in_between_frames,
+			&stock_in_between_frames,
+			&remove_identic_frames,
+			&compute_difference,
+			&min_mean_counted,
+			&diff_threshhold,
+			&verbose,
+			&pic_save_proba,
+			&file_proportion,
+			&timeout,
+			&first_frame_func,
+			&second_frame_func,
+			&compare_frame_func){
+		PyErr_SetString(PyExc_TypeError, "Invalid parameters");
+        return NULL;
+	}
+    error = extractFramesextractFrames(in_path, out_dir,
+			skip_frames,
+			skip_seconds,
+			start_at_frame,
+			stop_at_frame,
+			display_interval,
+			save_in_between_frames,
+			stock_in_between_frames,
+			remove_identic_frames,
+			compute_difference,
+			min_mean_counted,
+			diff_threshhold,
+			verbose,
+			pic_save_proba,
+			file_proportion,
+			timeout,
+			first_frame_func,
+			second_frame_func,
+			compare_frame_func);
+    return PyLong_FromLong(error);
+}
+#endif
+
+
 /*======== MAIN ==========*/
+#ifndef NOMAIN
 
 void usage(char* name){
-	cout << "Usage: " << name << " <path to video> <path write directory>" << endl;
+	cout << "Usage: " << name << " <path to video or directory> <output directory>" << endl;
 }
 
 #define PARAM 2
@@ -663,21 +742,21 @@ int main(int argc, char** argv)
 		usage(argv[0]);
 		return -1;
 	}
-	exctractFrames(argv[1], argv[2],
+	extractFrames(argv[1], argv[2],
 			0,    // skip_frames
 			1,     // skip_seconds
-			10000,    // start_at_frame
-			10500,   // stop_at_frame
+			5000,    // start_at_frame
+			9000,   // stop_at_frame
 			5,     // display_interval
 			true,  // save_in_between_frames
 			true, // stock_in_between_frames
 			true,  // remove_identic_frames
 			true, // compute_difference
-			10,    // min_mean_counted
-			0.25,     // diff_threshhold
+			20,    // min_mean_counted
+			0.16,     // diff_threshhold
 			true,  // verbose
 			1,   // pic_save_proba
-			0.01,  // file_proportion
+			0.005,  // file_proportion
 			0,     // timeout
 			NULL,  // first_frame_func
 			NULL,  // second_frame_func
