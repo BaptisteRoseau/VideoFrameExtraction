@@ -59,6 +59,9 @@ bool (*compare_frame_func)(const Mat &, const Mat &) = NULL);
 
 Be sure to have *OpenCV* and **all its dependencies** installed on your computed. If compilation fails even with everything installed, set the Makefile's *INCLUDE* variable to the path to your OpenCV libraries.
 
+You can either compile with Makefile or with:
+`python3 setup.py build`
+
 In order to install the library, just download the repository. You can use the precompiled librairy, or you can compile it yourself from the source code and the Makefile. Compile with -DNOMAIN in order to make a librairy.
 
 
