@@ -270,7 +270,7 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 		unsigned int curr_frame_idx, prev_frame_idx, loop_idx; // loop_idx is also used for as mean counter
 		double diff, diff_coef, mean; // The mean of all computed differences
 		float r;
-		bool fff_verified, sff_verified, cff_verified;
+		bool fff_verified, sff_verified, cff_verified, do_usr_func;
 		queue<unsigned int> in_btw_frm_indexes;
 		queue<Mat*> in_btw_frm_stocked;
 		string frame_path;
@@ -368,30 +368,36 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 			// Chance to save this frame
 			r = my_random();
 
-			// Apply user custom restrictions only if necessary
+			// Deciding if user_functions need to be used or not
+			do_usr_func = true;
 			if (r <= pic_save_proba){
 				// If identic frames need to be removed
 				if (remove_identic_frames){
 					if (are_identic_frames(prev_frame, curr_frame)){
-						fff_verified = false;
-					} else {
-						fff_verified = first_frame_func == NULL   ? true : first_frame_func(prev_frame);
-						sff_verified = second_frame_func == NULL  ? true : second_frame_func(curr_frame);
-						cff_verified = compare_frame_func == NULL ? true : compare_frame_func(prev_frame, curr_frame);
-						
+						do_usr_func = false;
 					}
 				}
-				// If identic frames don't need to be removed
-				else {
-					fff_verified = first_frame_func == NULL   ? true : first_frame_func(prev_frame);
-					sff_verified = second_frame_func == NULL  ? true : second_frame_func(curr_frame);
-					cff_verified = compare_frame_func == NULL ? true : compare_frame_func(prev_frame, curr_frame);
+				// If difference is too high
+				if (compute_difference){
+					if (loop_idx > min_mean_counted
+					 && diff_coef >= diff_threshhold){
+						do_usr_func = false;
+					}
 				}
 			// If the probability to save this picture is too low, don't save it
 			} else {
-				fff_verified = false;
+				do_usr_func = false;
 			}
 			
+			// Apply user custom restrictions only if necessary
+			if (do_usr_func){
+				fff_verified = first_frame_func == NULL   ? true : first_frame_func(prev_frame);
+				sff_verified = second_frame_func == NULL  ? true : second_frame_func(curr_frame);
+				cff_verified = compare_frame_func == NULL ? true : compare_frame_func(prev_frame, curr_frame);
+			} else {
+				fff_verified = false;
+			}
+
 			if (fff_verified
 			&& sff_verified
 			&& cff_verified
@@ -408,7 +414,7 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 				}
 
 				// Creating directory if doesn't exist
-				frame_path = out_dir+(string) "/"+to_string(global_counter)+"_4"; //TODO: remove the "_x"
+				frame_path = out_dir+(string) "/"+to_string(global_counter)+"_6"; //TODO: remove the "_x"
 				dir_entry = fs::directory_entry(frame_path);
 				if (dir_entry.exists()){
 					DISPLAY(cout << "Removing " << dir_entry.path() << endl);
@@ -503,6 +509,7 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 			// Parameters reinitialisation
 			video >> curr_frame; // Getting second frame
 			curr_frame_idx = video.get(CV_CAP_PROP_POS_FRAMES);
+			prev_frame = curr_frame.clone(); // Just to avoid "uninitialized" warning
 
 			unsigned int folder_id, frame_inf, frame_sup = 0;
 			while(true){ // break is computed later (curr_frame_idx must be modified)
@@ -570,6 +577,7 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 			}
 			empty_frame_stock(in_btw_frm_stocked);
 			curr_frame.release();
+			prev_frame.release();
 			video.release();
 		}
 	}
@@ -654,12 +662,12 @@ BOOST_PYTHON_MODULE(extractFrames){
 
 /*======== PYTHON ==========*/
 #ifdef USE_PYTHON
+// Argument retrieving function
 static PyObject *
-myFunc(PyObject *self, PyObject *args){
-    int error;
-	//Arguments list
-	const char *in_path;
-	const char *out_dir;
+PyExtractFrames(PyObject *self, PyObject *args, PyObject *kwargs){
+	//Arguments list with default arguments
+	char *in_path;
+	char *out_dir;
 	unsigned int skip_frames             = 1;
 	double       skip_seconds            = 0;
 	unsigned int start_at_frame          = 0;
@@ -679,8 +687,31 @@ myFunc(PyObject *self, PyObject *args){
 	bool (*second_frame_func)(const Mat &) = NULL;
 	bool (*compare_frame_func)(const Mat &, const Mat &) = NULL;
 
-	//TODO: Retrieve arguments and test this
-    if (!PyArg_ParseTuple(args, "ssuduuubbbbudbdddbbb",
+	// Keyword list for keyword arguments
+	static char *kwlist[] = {
+		 	"skip_frames",
+			"skip_seconds",
+			"start_at_frame",
+			"stop_at_frame",
+			"display_interval",
+			"save_in_between_frames",
+			"stock_in_between_frames",
+			"remove_identic_frames",
+			"compute_difference",
+			"min_mean_counted",
+			"diff_threshhold",
+			"verbose",
+			"pic_save_proba",
+			"file_proportion",
+			"timeout",
+			"first_frame_func",
+			"second_frame_func",
+			"compare_frame_func",
+			NULL};
+
+	// Retrieving arguments into local C++ variables
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs,
+			"ss|$IdIIIppppIdpddd000:", kwlist,
 			&in_path, 
 			&out_dir,
 			&skip_frames,
@@ -700,11 +731,13 @@ myFunc(PyObject *self, PyObject *args){
 			&timeout,
 			&first_frame_func,
 			&second_frame_func,
-			&compare_frame_func){
+			&compare_frame_func)){
 		PyErr_SetString(PyExc_TypeError, "Invalid parameters");
         return NULL;
 	}
-    error = extractFramesextractFrames(in_path, out_dir,
+
+	// Executing extractFrames function
+    int error = extractFrames(in_path, out_dir,
 			skip_frames,
 			skip_seconds,
 			start_at_frame,
@@ -724,7 +757,38 @@ myFunc(PyObject *self, PyObject *args){
 			second_frame_func,
 			compare_frame_func);
     return PyLong_FromLong(error);
-}
+};
+
+// Python extractFrame definition
+static PyMethodDef extractFrameMethods[] = 
+{
+    {"extractFrames", (PyCFunctionWithKeywords) PyExtractFrames, METH_VARARGS | METH_KEYWORDS,
+	 " Write frames from a video file into the output directory with various adjustable parameters.\n\
+Also allow the possibility to save the in-between frames. \n\
+\n\
+-in_path: The path to a video file or a directory containing video files.\n\
+-out_dir: The path to the output directory. If it doesn't exist, a new directory will be created.\n\
+-skip_frames: The interval between each pair of frames that have to be compared and saved. For example, a *skip_frames* of 5 will compare and save frames 1-5, 6-11, 12-17...\n\
+-skip_seconds: Same as skip_frames, but the unit is in seconds instead. If both *skip_frames* and *skip_seconds* are > 0, the priority is given to *skip_seconds*.\n\
+-start_at_frame: The starting frame index.\n\
+-stop_at_frame: The stoping frame index.\n\
+-display_interval: The interval for information display. This is not by frame, but by loop. Each 'skip_frame' frames count for 1 loop. For example, having 'skip_frame' to 5 and *display_interval* to 3 will result in display at frames 1-5, 18-23...\n\
+-save_in_between_frames: Whether or not in-between frames have to be saved.\n\
+-stock_in_between_frames: Whether or not in-between frames have to be stocked in memory or saved later while relooping the video. It speeds up the function, but if too many frames are stored into the memory you might want to set this to *false*.\n\
+-remove_identic_frames: Whether or not identic frames has to be removed or not. It is calculated for every successive frames so it slowers a bit the function.\n\
+-compute_difference: Whether or not the difference between each pair of frames has to be calculated, in order to save only pictures that aren't very different. This slowers a lot the function.\n\
+-min_mean_counted: The number of differences that have to be computed in order to have a meaningful mean.\n\
+-diff_threshhold: The threshold idicating when frames are considered to too different (values are around 0~2).\n\
+-verbose: Whether or not informations has to be displayed on the screen.\n\
+-pic_save_proba: The probability to save a pair of frames or not (unselected pair won't compute difference or user-specified test functions)\n\
+-file_proportion: The probability compute a found video or not (if too many videos are in the same directory).\n\
+-timeout: A timeout in seconds. Note the if 'stock_in_between_frames' is set to 0, the last video's in-between frames might not be all saved.\n\
+-first_frame_func: A user-specified function to test a property on the first frame. If this property if not verified, the pair of frames won't be saved.\n\
+-second_frame_func: A user-specified function to test a property on the second frame. If this property if not verified, the pair of frames won't be saved.\n\
+-compare_frame_func: A user-specified function to test a property on the pair of frames. If this property if not verified, the pair of frames won't be saved.\n\
+"},
+    {NULL, NULL, 0, NULL}
+};
 #endif
 
 
@@ -745,8 +809,8 @@ int main(int argc, char** argv)
 	extractFrames(argv[1], argv[2],
 			0,    // skip_frames
 			1,     // skip_seconds
-			5000,    // start_at_frame
-			9000,   // stop_at_frame
+			20000,    // start_at_frame
+			30000,   // stop_at_frame
 			5,     // display_interval
 			true,  // save_in_between_frames
 			true, // stock_in_between_frames
@@ -756,7 +820,7 @@ int main(int argc, char** argv)
 			0.16,     // diff_threshhold
 			true,  // verbose
 			1,   // pic_save_proba
-			0.005,  // file_proportion
+			0.01,  // file_proportion
 			0,     // timeout
 			NULL,  // first_frame_func
 			NULL,  // second_frame_func
