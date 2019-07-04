@@ -7,7 +7,6 @@ This function writes frames from a video file into the output directory with var
 ---------------------
 Here is the *exctractFrames* function prototype with all it's default values.
 
-TODO: Re-copier/coller parce que certains paramètres ont changé
 ```c++
 int exctractFrames(const char *in_path, const char *out_dir,
 unsigned int skip_frames             = 1,
@@ -20,7 +19,7 @@ bool         stock_in_between_frames = true,
 bool         remove_identic_frames   = false,
 bool         compute_difference      = false,
 unsigned int min_mean_counted        = 20,
-double       diff_threshhold         = 0.25,
+double       diff_threshhold         = 0.20,
 bool         verbose                 = true,
 double       pic_save_proba          = 1,
 double       file_proportion         = 1,
@@ -58,8 +57,10 @@ bool (*compare_frame_func)(const Mat &, const Mat &) = NULL);
 ## Installation
 ----------------
 
-In order to install the library, just download the repository. You can use the precompiled librairy, or you can compile it yourself from the source code and the Makefile. Compile with -DNOMAIN in order to make a librairy.
 Be sure to have *OpenCV* and **all its dependencies** installed on your computed. If compilation fails even with everything installed, set the Makefile's *INCLUDE* variable to the path to your OpenCV libraries.
+
+In order to install the library, just download the repository. You can use the precompiled librairy, or you can compile it yourself from the source code and the Makefile. Compile with -DNOMAIN in order to make a librairy.
+
 
 
 ## How to use

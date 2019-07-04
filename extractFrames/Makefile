@@ -12,13 +12,7 @@ LIBS= -lopencv_gapi \
 -lopencv_features2d \
 -lopencv_objdetect \
 -lopencv_flann \
--lstdc++fs \
-#-lboost_python \
-#-lpython3.6 \
-#-L/usr/lib/python3.6/config-3.6m-x86_64-linux-gnu/ \
-#-L/usr/lib/python3.6 \
-#-L/usr/lib/boost_1_68_0\
-#-lboost_python-py36
+-lstdc++fs
 
 INCLUDE= -I /usr/local/include/opencv4/ -I /usr/include/python3.6/
 
@@ -26,9 +20,9 @@ WALL= -std=c++17 -Wall -Wextra -g -Wno-unused-variable -Wno-unused-parameter
 
 SRC=extractFrames.cpp
 OUTPUT=extractFrames
-ARGS= ./AccelWorld1.mp4 testDir
+ARGS= path/to/video/file
 
-DD_DIR_ARGS=/media/broseau/BR_MULTIMEDIA/Disque\ Dur/Vidéos/Animes testDir
+DD_DIR_ARGS=path/to/video/dir Data
 
 $(OUTPUT): $(SRC)
 	g++ $(WALL) $(INCLUDE) $(SRC) $(LIBS) -o $(OUTPUT)
@@ -43,7 +37,8 @@ gdb: $(OUTPUT)
 	gdb -ex run --args $(OUTPUT) $(ARGS)
 
 lib: $(SRC)
-	g++ -DNOMAIN -DUSE_PYTHON -fPIC $(WALL) $(INCLUDE) $(SRC) $(LIBS) -shared -o libextractframe.so
+	#g++ -DNOMAIN -DUSE_PYTHON -fPIC $(WALL) $(INCLUDE) $(SRC) $(LIBS) -shared -o libextractframe.so
+	g++ -DNOMAIN -fPIC $(WALL) $(INCLUDE) $(SRC) $(LIBS) -shared -o libextractframe.so
 
 testpy: lib
 	python3 test.py
@@ -60,3 +55,4 @@ valgrinddir: $(OUTPUT)
 clean:
 	rm -rf *.o
 	rm $(OUTPUT)
+	rm -rf build
