@@ -282,7 +282,7 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 		// Retrieving video path
 		string filepath = vid_path_queue->front();
 		vid_path_queue->pop();
-		if (my_random() < 0.6){ // In order to have kind of a "shuffle" effect on the queue
+		if (my_random() < 0.8){ // In order to have kind of a "shuffle" effect on the queue
 			vid_path_queue->push(filepath);
 			continue;
 		}
@@ -458,7 +458,7 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 						|| (remove_identic_frames
 							&& !tmp_mat_prev->empty()
 							&& !are_identic_frames(*tmp_mat_prev, *tmp_mat))){
-							write_frame(*tmp_mat, frame_path, "frame_"+to_string(tmp_idx)+".jpg", false);
+							write_frame(*tmp_mat, frame_path, to_string(global_counter)+"_frame_"+to_string(tmp_idx)+".jpg", false);
 						}
 						tmp_idx++;
 						tmp_mat_prev->release();
@@ -565,7 +565,7 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 				if (frame_inf < curr_frame_idx && curr_frame_idx < frame_sup){
 					if (!remove_identic_frames
 						|| (remove_identic_frames && !are_identic_frames(prev_frame, curr_frame))){
-						write_frame(curr_frame, frame_path, "frame_"+to_string(curr_frame_idx)+".jpg", false);
+						write_frame(curr_frame, frame_path, to_string(folder_id)+"_frame_"+to_string(curr_frame_idx)+".jpg", false);
 					}
 				}
 
