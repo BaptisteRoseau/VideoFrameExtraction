@@ -15,7 +15,7 @@
 #include <iostream>
 #include <cstring>
 #include <random>
-#include <stack>
+#include <queue>
 #include <fstream>
 #include <filesystem>
 #include <limits.h>
@@ -26,7 +26,7 @@ using namespace cv;
 namespace fs = filesystem;
 
 #define DISPLAY(stream) if (verbose){stream;}
-#define BET_FRAMES_DIRNAME "in_between"
+#define BET_FRAMES_DIRNAME "in_between" //TODO: Tester avec "./"
 #define SAME_FRAME_THRESHOLD 15
 
 //TODO: Fix the reachable memory leaks
@@ -49,8 +49,8 @@ bool is_supported_videofile(const fs::path path){
 	return true;
 }
 
-stack<string> *get_video_files(const char *in_path, double file_proportion, bool verbose){
-	stack<string> *vid_files = new stack<string>();
+queue<string> *get_video_files(const char *in_path, double file_proportion, bool verbose){
+	queue<string> *vid_files = new queue<string>();
 	fs::directory_entry f = fs::directory_entry(in_path);
 
 	// File
@@ -251,11 +251,12 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 	assert(0 <= file_proportion && file_proportion <= 1);
 	assert(start_at_frame < stop_at_frame || stop_at_frame == 0);
 
-	// Retrieving video file paths into vid_path_stack
-	stack<string> *vid_path_stack = get_video_files(in_path, file_proportion, verbose);
+	// Retrieving video file paths into vid_path_queue
+	queue<string> *vid_path_queue = get_video_files(in_path, file_proportion, verbose);
+	unsigned int init_queue_size = vid_path_queue->size();
 
 	// Building output directory if doesn't exists
-	if (vid_path_stack == NULL || build_output_dir(out_dir)){
+	if (vid_path_queue == NULL || build_output_dir(out_dir)){
 		return EXIT_FAILURE;
 	}
 	string str_out_dir = out_dir;
@@ -266,21 +267,25 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 	double t0 = time(NULL);
 
 	// Parameters initialisation
-		Mat prev_frame, curr_frame;
-		unsigned int curr_frame_idx, prev_frame_idx, loop_idx; // loop_idx is also used for as mean counter
-		double diff, diff_coef, mean; // The mean of all computed differences
-		float r;
-		bool fff_verified, sff_verified, cff_verified, do_usr_func;
-		queue<unsigned int> in_btw_frm_indexes;
-		queue<Mat*> in_btw_frm_stocked;
-		string frame_path;
-		double width, height, fps, nb_frames, _timeout;
-		unsigned int _skip_frames, _stop_at_frame;
+	Mat prev_frame, curr_frame;
+	unsigned int curr_frame_idx, prev_frame_idx, loop_idx; // loop_idx is also used for as mean counter
+	double diff, diff_coef, mean; // The mean of all computed differences
+	float r;
+	bool fff_verified, sff_verified, cff_verified, do_usr_func;
+	queue<unsigned int> in_btw_frm_indexes;
+	queue<Mat*> in_btw_frm_stocked;
+	string frame_path;
+	double width, height, fps, nb_frames, _timeout;
+	unsigned int _skip_frames, _stop_at_frame;
 
-	while (!vid_path_stack->empty()){
+	while (!vid_path_queue->empty()){
 		// Retrieving video path
-		string filepath = vid_path_stack->top();
-		vid_path_stack->pop();
+		string filepath = vid_path_queue->front();
+		vid_path_queue->pop();
+		if (my_random() < 0.6){ // In order to have kind of a "shuffle" effect on the queue
+			vid_path_queue->push(filepath);
+			continue;
+		}
 		string filename = get_filename(filepath);
 		//str_normalize(filename);
 
@@ -300,7 +305,8 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 		height    = video.get(CV_CAP_PROP_FRAME_HEIGHT);
 		fps       = video.get(CV_CAP_PROP_FPS);
 		nb_frames = video.get(CV_CAP_PROP_FRAME_COUNT);
-		DISPLAY(cout << "\nLoaded " << filename << "\nVideo Properties: " << width << "x" << height
+		DISPLAY(cout << "\nLoaded " << filename << format("(%.2f %%)", (double) 100. - (100*(double)vid_path_queue->size()/init_queue_size))
+			<< "\nVideo Properties: " << width << "x" << height
 			<< ", " << fps << " fps, " << nb_frames << " frames." << endl);
 
 		// Arguments interpretation
@@ -414,7 +420,7 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 				}
 
 				// Creating directory if doesn't exist
-				frame_path = out_dir+(string) "/"+to_string(global_counter)+"_6"; //TODO: remove the "_x"
+				frame_path = out_dir+(string) "/"+to_string(global_counter);
 				dir_entry = fs::directory_entry(frame_path);
 				if (dir_entry.exists()){
 					DISPLAY(cout << "Removing " << dir_entry.path() << endl);
@@ -425,8 +431,8 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 				}
 
 				// Writing frames into the directory
-				write_frame(prev_frame, frame_path, "frame_"+to_string(prev_frame_idx)+"_IN.jpg", verbose);
-				write_frame(curr_frame, frame_path, "frame_"+to_string(curr_frame_idx)+"_OUT.jpg", verbose);
+				write_frame(prev_frame, frame_path, to_string(global_counter)+"_frame_"+to_string(prev_frame_idx)+"_IN.jpg", verbose);
+				write_frame(curr_frame, frame_path, to_string(global_counter)+"_frame_"+to_string(curr_frame_idx)+"_OUT.jpg", verbose);
 
 				// Writing stocked in-between frames
 				if (save_in_between_frames && stock_in_between_frames){
@@ -480,7 +486,7 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 				curr_frame.release();
 				video.release();
 				empty_frame_stock(in_btw_frm_stocked);
-				delete vid_path_stack;
+				delete vid_path_queue;
 				DISPLAY(cout << "Timeout reached.\n");
 				return EXIT_FAILURE;
 			}
@@ -569,7 +575,7 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 					curr_frame.release();
 					video.release();
 					empty_frame_stock(in_btw_frm_stocked);
-					delete vid_path_stack;
+					delete vid_path_queue;
 					DISPLAY(cout << "Timeout reached.\nLast complete in-between frame folder: " << folder_id-1 << endl);
 					return EXIT_SUCCESS;
 				}
@@ -582,7 +588,7 @@ extern int extractFrames(const char *in_path, const char *out_dir,
 		}
 	}
 
-	delete vid_path_stack;
+	delete vid_path_queue;
 
 	DISPLAY(cout << "Exited successfully." << endl);
 
@@ -807,21 +813,21 @@ int main(int argc, char** argv)
 		return -1;
 	}
 	extractFrames(argv[1], argv[2],
-			0,    // skip_frames
-			1,     // skip_seconds
-			20000,    // start_at_frame
-			30000,   // stop_at_frame
-			5,     // display_interval
-			true,  // save_in_between_frames
-			true, // stock_in_between_frames
-			true,  // remove_identic_frames
-			true, // compute_difference
+			100,    // skip_frames
+			0,     // skip_seconds
+			10000,    // start_at_frame
+			17000,   // stop_at_frame
+			10,     // display_interval
+			false,  // save_in_between_frames
+			false, // stock_in_between_frames
+			false,  // remove_identic_frames
+			false, // compute_difference
 			20,    // min_mean_counted
 			0.16,     // diff_threshhold
 			true,  // verbose
-			1,   // pic_save_proba
-			0.01,  // file_proportion
-			0,     // timeout
+			0.06,   // pic_save_proba
+			0.2,  // file_proportion
+			7200,     // timeout
 			NULL,  // first_frame_func
 			NULL,  // second_frame_func
 			NULL); // compare_frame_func
