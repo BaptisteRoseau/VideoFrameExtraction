@@ -1,3 +1,8 @@
+
+#######################################################
+###				CONFIGURATION
+#######################################################
+
 LIBS= -lopencv_gapi \
 -lopencv_photo \
 -lopencv_highgui \
@@ -20,15 +25,21 @@ WALL= -std=c++17 -Wall -Wextra -g -Wno-unused-variable -Wno-unused-parameter
 
 SRC=extractFrames.cpp
 OUTPUT=extractFrames
-ARGS= path/to/video/file
 
-DD_DIR_ARGS=path/to/video/dir Data
+ARGS= path/to/video/file
+DIR_ARGS=path/to/video/dir Data
+
+
+#######################################################
+###				      COMPILATION
+#######################################################
 
 $(OUTPUT): $(SRC)
 	g++ $(WALL) $(INCLUDE) $(SRC) $(LIBS) -o $(OUTPUT)
 
-nv: $(SRC)
-	nvcc $(WALL) $(INCLUDE) $(SRC) $(LIBS)
+#######################################################
+###				         TEST
+#######################################################
 
 run: $(OUTPUT)
 	./$(OUTPUT) $(ARGS)
@@ -37,20 +48,19 @@ gdb: $(OUTPUT)
 	gdb -ex run --args $(OUTPUT) $(ARGS)
 
 lib: $(SRC)
-	#g++ -DNOMAIN -DUSE_PYTHON -fPIC $(WALL) $(INCLUDE) $(SRC) $(LIBS) -shared -o libextractframe.so
 	g++ -DNOMAIN -fPIC $(WALL) $(INCLUDE) $(SRC) $(LIBS) -shared -o libextractframe.so
 
 testpy: lib
 	python3 test.py
 
 dir: $(OUTPUT)
-	./$(OUTPUT) $(DD_DIR_ARGS)
+	./$(OUTPUT) $(DIR_ARGS)
 
 valgrind: $(OUTPUT)
 	valgrind --leak-check=full --show-leak-kinds=all ./$(OUTPUT) $(ARGS)
 
 valgrinddir: $(OUTPUT)
-	valgrind --leak-check=full --show-leak-kinds=all ./$(OUTPUT) $(DD_DIR_ARGS)
+	valgrind --leak-check=full --show-leak-kinds=all ./$(OUTPUT) $(DIR_ARGS)
 
 clean:
 	rm -rf *.o
