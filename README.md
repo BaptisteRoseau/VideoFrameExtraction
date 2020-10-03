@@ -1,10 +1,31 @@
 # extractFrame function
-=======================
 
 This function writes frames from a video file into the output directory with various adjustable parameters. Also allow the possibility to save the in-between frames.
 
+
+## Installation
+
+Be sure to have *OpenCV* and **all its dependencies** installed on your computer, and OpenCV libraries and headers reachable from `$LD_LIBRARY_PATH` and `$INCLUDE_PATH`. Update `Makefile`'s `ARGS` and `DIR_ARGS` to your video and video directory test files in order to be able to run the tests.
+
+You can now run `make` to build the executable, and `make run` to test it.
+
+
+## How to use
+--------------
+### C++
+
+You can change several options according to your objective, the options are listed bellow.
+
+No command line argument parser have been implemented yet, so the only way to change the argument is to change them directly in the code of [extractFrames.cpp](extractFrames.cpp), and then run `make run` or `make && extractFrames <path to vid or dir>`.
+
+
+### Python
+
+The Python script does a bit less the the C++ executable and is way slower, but could be used as a template for another project so I decided it is best to let it here. It is strongly advised to use the C++ tool instead.
+
+
 ## Function prototype
----------------------
+
 Here is the *exctractFrames* function prototype with all it's default values.
 
 ```c++
@@ -30,7 +51,6 @@ bool (*compare_frame_func)(const Mat &, const Mat &) = NULL);
 ```
 
 ## Argument explaination
--------------------------
 
 - **in_path** The path to a video file or a directory containing video files.
 - **out_dir** The path to the output directory. If it doesn't exist, a new directory will be created.
@@ -52,23 +72,3 @@ bool (*compare_frame_func)(const Mat &, const Mat &) = NULL);
 - **first_frame_func** A user-specified function to test a property on the first frame. If this property if not verified, the pair of frames won't be saved.
 - **second_frame_func** A user-specified function to test a property on the second frame. If this property if not verified, the pair of frames won't be saved.
 - **compare_frame_func** A user-specified function to test a property on the pair of frames. If this property if not verified, the pair of frames won't be saved.
-
-
-## Installation
-----------------
-
-Be sure to have *OpenCV* and **all its dependencies** installed on your computed. If compilation fails even with everything installed, set the Makefile's *INCLUDE* variable to the path to your OpenCV libraries.
-
-You can either compile with Makefile or with:
-`python3 setup.py build`
-
-In order to install the library, just download the repository. You can use the precompiled librairy, or you can compile it yourself from the source code and the Makefile. Compile with -DNOMAIN in order to make a librairy.
-
-
-
-## How to use
---------------
-### C++
-
-
-### Python
