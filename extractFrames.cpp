@@ -26,10 +26,8 @@ using namespace cv;
 namespace fs = filesystem;
 
 #define DISPLAY(stream) if (verbose){stream;}
-#define BET_FRAMES_DIRNAME "in_between" //TODO: Tester avec "./"
+#define BET_FRAMES_DIRNAME "in_between"
 #define SAME_FRAME_THRESHOLD 15
-
-//TODO: Fix the reachable memory leaks
 
 /*======== SUBFUNCTIONS IMPLEMENTATION ==========*/
 
@@ -72,7 +70,7 @@ queue<string> *get_video_files(const char *in_path, double file_proportion, bool
 				}
 			}
 		}
-		//shuffle(vid_files); //TODO: Find a way to shuffle the queue...
+		//shuffle(vid_files); //TODO: Find a way to shuffle the queue
 		return vid_files;
 	}
 
