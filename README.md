@@ -21,7 +21,7 @@ No command line argument parser have been implemented yet, so the only way to ch
 
 ### Python
 
-The Python script does a bit less the the C++ executable and is way slower, but could be used as a template for another project so I decided it is best to let it here. It is strongly advised to use the C++ tool instead.
+The Python script does a bit less than the the C++ executable and is way slower, but could be used as a template for another project so I decided it is best to let it here. It is strongly advised to use the C++ tool instead.
 
 
 ## Function prototype
